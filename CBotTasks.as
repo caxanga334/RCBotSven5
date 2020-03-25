@@ -861,6 +861,7 @@ final class CBotButtonTask : RCBotTask
     {
         return "CBotButtonTask";
     }
+    
     CBotButtonTask ( int button )
     {
         m_iButton = button;
@@ -868,6 +869,16 @@ final class CBotButtonTask : RCBotTask
 
     void execute ( RCBot@ bot )
     {
+        // Don't reload if I'm shooting!!!!
+        if ( m_iButton == IN_RELOAD )
+        {
+            if ( bot.hasEnemy() )
+            {
+                Failed();
+                return;
+            }
+        }
+
         if ( m_fStartTime == 0.0f )
             m_fStartTime = g_Engine.time + 1.0f;
         else if ( m_fStartTime < g_Engine.time )
@@ -1279,6 +1290,7 @@ class CBotWaitForEntity : RCBotTask
 class CBotWaitPlatform : RCBotTask
 { 
     Vector m_vOrigin;
+    float m_fHeightCheck;
 
     string DebugString ()
     {
@@ -1288,7 +1300,8 @@ class CBotWaitPlatform : RCBotTask
      CBotWaitPlatform ( Vector vPlatform )
      {
         m_vOrigin = vPlatform;       
-        setTimeout(Math.RandomFloat(9.0f,11.0f));    
+        setTimeout(Math.RandomFloat(9.0f,11.0f));   
+        m_fHeightCheck = Math.RandomFloat(64.0f,96.0f); 
      }
 
      void execute ( RCBot@ bot )
@@ -1299,12 +1312,16 @@ class CBotWaitPlatform : RCBotTask
 
         TraceResult tr;
 
-        g_Utility.TraceLine( m_vOrigin, m_vOrigin-Vector(0,0,64), ignore_monsters,dont_ignore_glass, bot.m_pPlayer.edict(), tr );
+        g_Utility.TraceLine( m_vOrigin, m_vOrigin-Vector(0,0,m_fHeightCheck), ignore_monsters,dont_ignore_glass, bot.m_pPlayer.edict(), tr );
 
         bot.setLookAt(m_vOrigin);
 
-        if ( tr.flFraction < 1.0 )
+        if ( tr.flFraction < 1.0 && tr.pHit !is null )
+        {
+            bot.m_flJumpPlatformTime = g_Engine.time + 3.0f;
+            @bot.m_pExpectedPlatform = g_EntityFuncs.Instance(tr.pHit);
             Complete();
+        }
      }
 }
 

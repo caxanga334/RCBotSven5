@@ -28,7 +28,7 @@ const int PRIORITY_OVERRIDE = 7;
 // ------------------------------------
 final class RCBot : BotManager::BaseBot
 {	
-	private float m_fNextThink = 0;
+	//private float m_fNextThink = 0;
 
 	RCBotSchedule@ m_pCurrentSchedule;
 
@@ -80,6 +80,9 @@ final class RCBot : BotManager::BaseBot
 	EHandle m_pLastSeenScientist;
 
 	EHandle m_pFollowingNPC;
+
+	float m_flJumpPlatformTime = 0;
+	CBaseEntity@ m_pExpectedPlatform = null;
 
 	Vector m_vLadderVector;
 
@@ -235,14 +238,48 @@ final class RCBot : BotManager::BaseBot
 			{
 				RCBotSchedule@ sched = SCHED_CREATE_NEW();
 				RCBotTask@ task = SCHED_CREATE_PATH(vTalker,talker);
+				
+				float fTime = 90.0f;
 
 				bBotHeard = true;
+
+				// should work for eg....
+				//  "Wait 2 min" or "wait here 2 min" or "wait here for 2 mins"
+				if ( args.length() > 2 )
+				{
+					uint arg = 2;
+
+					// search for a number
+					while ( arg < args.length() )
+					{
+						fTime = atof(args[arg++]);
+
+						if ( fTime > 0.0f ) // valid number
+							break;
+					}
+
+					if ( arg < args.length() )
+					{
+						if ( args[arg] == "min" || args[arg] == "mins" )
+						{
+							fTime *= 60.0f;
+						}
+						else if ( args[arg] == "hour" || args[arg] == "hours" )
+						{
+							fTime *= 3600.0f;
+						}											
+					}
+				}
+
+				// no time given
+				if ( fTime == 0.0f )
+					fTime = 90.0f;
 
 				if ( task !is null )
 				{
 					sched.addTask(task);
 					sched.addTask(CBotMoveToOrigin(vTalker));
-					sched.addTask(CBotTaskWait(90.0f,vTalker));
+					sched.addTask(CBotTaskWait(fTime,vTalker));
 					OK = true;
 				}
 			}
@@ -455,6 +492,25 @@ final class RCBot : BotManager::BaseBot
 			
 			if ( m_pUseBelief.GetBool() )
 			 	message += "[" +m_fBelief.getBeliefPercent(m_pNextWpt.iIndex) + " danger]";	
+
+
+		}
+
+		if ( m_iCurrentWaypoint != -1 )
+		{
+			CWaypoint@ pWpt = g_Waypoints.getWaypointAtIndex(m_iCurrentWaypoint);
+			 message += "\nCurrent Wpt: " + m_iCurrentWaypoint;
+			
+		     message += " (distance = " + distanceFrom(pWpt.m_vOrigin) + ")";
+
+			 Vector m_vOrigin = m_pPlayer.pev.origin;
+
+			 CBasePlayer@ lp = ListenPlayer();
+
+			 if ( lp !is null )
+			{
+				 drawBeam(lp,m_vOrigin,pWpt.m_vOrigin,WptColor(200,200,200));
+			}
 		}
 
 		message += "\nEnemy: ";
@@ -1381,6 +1437,9 @@ case 	CLASS_BARNACLE	:
 		//if ( m_fNextThink > g_Engine.time )
 		//	return;
 
+		// make bots randomly alter thinking time
+		//m_fNextThink = g_Engine.time + Math.RandomFloat(0.5,1.5);
+
 		/*
 
 		CSoundEnt@ soundEnt = GetSoundEntInstance();
@@ -1448,9 +1507,6 @@ case 	CLASS_BARNACLE	:
 		ReleaseButtons();
 
 		m_fDesiredMoveSpeed = m_pPlayer.pev.maxspeed;
-
-		// 100 ms think
-		//m_fNextThink = g_Engine.time + 0.1;
 
 		BotManager::BaseBot::Think();
 		
@@ -1660,6 +1716,8 @@ case 	CLASS_BARNACLE	:
 
 			@m_pNextWpt = null;
 
+		m_flJumpPlatformTime = 0;
+		@m_pExpectedPlatform = null;
 		m_iLastWaypointFrom = -1;
 		m_iLastWaypointTo = -1;
 
@@ -1739,12 +1797,13 @@ case 	CLASS_BARNACLE	:
 		//	navigator.execute(this);
 		float fStuckSpeed = 0.1*m_fDesiredMoveSpeed;
 
-
 		if ( IsOnLadder() || ((m_pPlayer.pev.flags & FL_DUCKING) == FL_DUCKING) )
 			fStuckSpeed /= 2;
-
-		if ( m_pPlayer.pev.waterlevel > 1 )
-			fStuckSpeed /= 2;
+		else if ( m_pPlayer.pev.waterlevel > 1 )
+			fStuckSpeed /= 2;		
+		// Can go even slower with minigun
+		else if ( IsHoldingMinigun() )
+			fStuckSpeed /= 3;
 
 		// for courch jump
 		if ( m_flJumpTime + 0.5f > g_Engine.time )
@@ -1772,9 +1831,11 @@ case 	CLASS_BARNACLE	:
 			m_pLastEnemy = null;
 			m_bLastSeeEnemyValid = false;
 		}		
+
+		DoJump();
 	}
 
-	void Jump ()
+	bool IsHoldingMinigun ()
 	{
 		CBotWeapon@ weap = m_pWeapons.getCurrentWeapon();
 
@@ -1782,14 +1843,46 @@ case 	CLASS_BARNACLE	:
 		{
 			if ( weap.IsMinigun() )
 			{
-				// can't jump while holding minigun
-				m_pPlayer.DropItem("weapon_minigun");
+				return true;
 			}
+		}		
+
+		return false;
+	}
+
+	bool JumpPending = false;
+	float m_fPendingJumpTime = 0.0f;
+	
+	void Jump ()
+	{
+		if ( IsHoldingMinigun() )
+		{
+			// can't jump while holding minigun
+			m_pPlayer.DropItem("weapon_minigun");		
 		}
 
-		m_flJumpTime = g_Engine.time;
-		PressButton(IN_JUMP);
+		// wait before pressing jump in order to speed up
+		m_fPendingJumpTime = g_Engine.time + Math.RandomFloat(0.1f,0.5f);
 
+		//m_flJumpTime = g_Engine.time;
+		//PressButton(IN_JUMP);
+
+	}
+
+	void DoJump ()
+	{
+		if ( m_fPendingJumpTime > 0.0f )
+		{
+			// can only jump on ground
+
+				if ( (( (m_pPlayer.pev.flags & FL_ONGROUND) == FL_ONGROUND )&&(m_pPlayer.pev.velocity.Length2D() > (m_pPlayer.pev.maxspeed/16))) || (m_fPendingJumpTime < g_Engine.time) )
+				{
+					m_fPendingJumpTime = 0.0f;
+					PressButton(IN_JUMP);
+					m_flJumpTime = g_Engine.time;
+				}
+			
+		}
 	}
 
 	CWaypoint@ m_pNextWpt = null;
@@ -1963,8 +2056,10 @@ case 	CLASS_BARNACLE	:
 		}
 		else
 		{
-			//BotMessage("m_pCurrentSchedule == null");
-			@m_pCurrentSchedule = utils.execute(this);
+			if ( m_pDisableUtil.GetBool() == false )
+			{
+				@m_pCurrentSchedule = utils.execute(this);
+			}
 		}
 
 		m_iCurrentPriority = PRIORITY_NONE;
