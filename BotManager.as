@@ -13,7 +13,6 @@
 
 BotManager::BotManager g_BotManager( @CreateRCBot );
 
-
 const int PRIORITY_NONE = 0;
 const int PRIORITY_WAYPOINT = 1;	
 const int PRIORITY_LISTEN = 2;
@@ -37,6 +36,10 @@ final class RCBot : BotManager::BaseBot
 	bool init;
 
 	EHandle m_pEnemy;
+
+//	EHandle m_pNextEnemy;
+
+	BotEnemiesVisible m_pEnemiesVisible;
 
 	CBotVisibles@ m_pVisibles;
 
@@ -356,7 +359,7 @@ final class RCBot : BotManager::BaseBot
 						RCBotTask@ task = SCHED_CREATE_PATH(vTalker,talker);
 
 						sched.addTask(task);
-						sched.addTask(CBotTaskFollow(pPlayerToFollow));
+						sched.addTask(CBotTaskFollow(pPlayerToFollow,false));
 						OK = true;
 					}
 				}				
@@ -524,6 +527,8 @@ final class RCBot : BotManager::BaseBot
 		else 
 			message += "none";
 
+		message += "\nEnemies Visible = " + m_pEnemiesVisible.EnemiesVisible();
+
 		message += "\nHealth: " + (HealthPercent()*100) + "%";		
 		message += "\nArmor: " + (ArmorPercent()*100) + "%";		
 
@@ -681,7 +686,13 @@ final class RCBot : BotManager::BaseBot
 			return BreakableIsEnemy(entity);
 
 		if ( szClassname == "func_tank")
-			return false;
+		{
+		    CBaseTank@ pTank = cast<CBaseTank@>( entity );
+
+
+// to test
+			return pTank.IsBreakable() && pTank.IsPlayerAlly() == false;
+		}
 
 		if ( entity.pev.deadflag != DEAD_NO )
 			return false;
@@ -689,19 +700,36 @@ final class RCBot : BotManager::BaseBot
 		if ( entity.pev.health <= 0 )
 			return false;
 
-		switch ( entity.Classify() )
+		if ( entity.pev.effects & EF_NODRAW == EF_NODRAW )
+		return false; // can't see
+
+		if ( szClassname == "hornet" )
+			return false;
+
+		if ( szClassname == "monster_tentacle" ) // tentacle things dont die
+			return false;
+
+		if ( szClassname == "monster_gargantua" )
+			return !entity.IsPlayerAlly();
+
+		if ( entity.pev.flags & FL_MONSTER == FL_MONSTER )
+		{
+
+				//http://www.svencoop.com/manual/classes.html
+				switch ( entity.Classify() )
 		{
 case 	CLASS_FORCE_NONE	:
-case 	CLASS_PLAYER_ALLY	:
 case 	CLASS_NONE	:
 case 	CLASS_PLAYER	:
-case 	CLASS_HUMAN_PASSIVE	:
-case 	CLASS_ALIEN_PASSIVE	:
-case 	CLASS_INSECT	:
-case 	CLASS_PLAYER_BIOWEAPON	:
-case 	CLASS_ALIEN_BIOWEAPON	:
 
- 		if ( szClassname == "monster_leech" )
+case 	CLASS_ALIEN_PASSIVE	:
+case 	CLASS_PLAYER_BIOWEAPON	:
+	return false; // ignore
+case 	CLASS_PLAYER_ALLY	:
+case 	CLASS_HUMAN_PASSIVE	:
+	return false; // ally
+case 	CLASS_INSECT	:
+if ( szClassname == "monster_leech" )
 		{
 			if ( entity.pev.waterlevel > 0 && m_pPlayer.pev.waterlevel > 0 )
 			{
@@ -713,6 +741,7 @@ case 	CLASS_ALIEN_BIOWEAPON	:
 			}
 		}
 		return false;
+case 	CLASS_ALIEN_BIOWEAPON	:
 case 	CLASS_MACHINE	:
 case 	CLASS_HUMAN_MILITARY	:
 case 	CLASS_ALIEN_MILITARY	:
@@ -723,32 +752,53 @@ case 	CLASS_XRACE_PITDRONE	:
 case 	CLASS_XRACE_SHOCK	:
 case 	CLASS_BARNACLE	:
 
-		if ( szClassname == "monster_tentacle" ) // tentacle things dont die
-			return false;
-
 		if ( szClassname == "monster_turret" || szClassname == "monster_miniturret" )
 		{
-			// turret is invincible
+			// turret is invincible when closed
 			if ( entity.pev.sequence == 0 )
 				return false;
 		}
-/*
-		if ( szClassname == "monster_generic" )
+return true;
+		}
+		/*switch ( entity.Classify() )
+		{
+case 	CLASS_FORCE_NONE	:
+case 	CLASS_PLAYER_ALLY	:
+case 	CLASS_NONE	:
+case 	CLASS_PLAYER	:
+case 	CLASS_HUMAN_PASSIVE	:
+case 	CLASS_ALIEN_PASSIVE	:
+case 	CLASS_INSECT	:
+case 	CLASS_PLAYER_BIOWEAPON	:
+case 	CLASS_ALIEN_BIOWEAPON	:*/
+
+ 		
+		/*return false;
+case 	CLASS_MACHINE	:
+case 	CLASS_HUMAN_MILITARY	:
+case 	CLASS_ALIEN_MILITARY	:
+case 	CLASS_ALIEN_MONSTER	:
+case 	CLASS_ALIEN_PREY	:
+case 	CLASS_ALIEN_PREDATOR	:
+case 	CLASS_XRACE_PITDRONE	:
+case 	CLASS_XRACE_SHOCK	:
+case 	CLASS_BARNACLE	:*/
+
+	/*	if ( szClassname == "monster_tentacle" ) // tentacle things dont die
 			return false;
-		 else if ( szClassname,"monster_furniture") )
-			return FALSE;
-		else if ( FStrEq(szClassname,"monster_leech") )
-			return FALSE;
-		else if ( FStrEq(szClassname,"monster_cockroach") )
-			return FALSE;		*/
 
-		return !entity.IsPlayerAlly();
 
-		default:
+		return !entity.IsPlayerAlly();*/
+
+			}
+
+			return false;
+
+		/*default:
 		break;
 		}
 
-		return false;
+		return false;*/
 	}
 
 	bool hasEnemy ()
@@ -763,6 +813,12 @@ case 	CLASS_BARNACLE	:
 
 	bool canGotoWaypoint ( CWaypoint@ currWpt, CWaypoint@ succWpt )
 	{
+		if ( succWpt.hasFlags(W_FL_CROUCHJUMP) )
+		{
+			// this waypoint requires the long jump modules
+			if ( m_pPlayer.m_fLongJump == false )
+				return false;
+		}
 		if ( m_bLastPathFailed )
 		{
 			if ( currWpt.iIndex == m_iLastWaypointFrom && succWpt.iIndex == m_iLastWaypointTo )
@@ -874,7 +930,11 @@ case 	CLASS_BARNACLE	:
 
 		//if ( (iSucc != m_iGoalWaypoint) && !m_pBot.canGotoWaypoint(vOrigin,succWpt,currWpt) )
 	//		continue;
-
+		if ( currWpt.hasFlags(W_FL_WATER) )
+		{
+			if ( g_EngineFuncs.PointContents(currWpt.m_vOrigin) != CONTENTS_WATER )
+				return false;
+		}
 
 		if ( currWpt.hasFlags(W_FL_TELEPORT) )
 		{
@@ -983,15 +1043,46 @@ case 	CLASS_BARNACLE	:
 					return 3;
 				}
 			}
+			// Wait No player waypoint 
 			else if( pNextWpt.hasFlags(W_FL_WAIT_NO_PLAYER) )
 			{
-				if ( m_pCurrentSchedule is null )
+				if ( m_pCurrentSchedule is null ) // create new schedule if none exists
 					m_pCurrentSchedule = RCBotSchedule();
 				
 				m_pCurrentSchedule.addTaskFront(CBotTaskWaitNoPlayer(pNextWpt.m_vOrigin));
 			}			
 		}
-				
+		if ( wpt.hasFlags(W_FL_LIFT) )
+		{
+			// find platform
+			if ( m_pPlayer.pev.groundentity !is null )
+			{
+				CBaseEntity@ pGroundEnt = g_EntityFuncs.Instance(m_pPlayer.pev.groundentity);
+
+				if ( pGroundEnt !is null )
+				{
+					CBaseToggle@ pDoor = cast<CBaseToggle@>(pGroundEnt);
+
+					if ( pDoor !is null )
+					{
+						//classname, Vector vOrigin, float fMinDist, bool checkFrame, bool bVisible
+						CBaseEntity@ pButton = UTIL_FindNearestEntity("func_button",m_pPlayer.pev.origin,200.0f,false,true);
+
+						if ( pButton !is null )
+							pressButton(pButton);
+						else 
+							BotMessage("pButton null");
+					}
+					else 
+							BotMessage("pDoor null");
+				}
+				else 
+					BotMessage("pGroundEnt instance null");
+
+			}
+			else 
+					BotMessage("pGroundEnt instance null");
+		}
 		if ( wpt.hasFlags(W_FL_WAIT) )
 		{
 			if ( m_pCurrentSchedule is null )
@@ -1026,15 +1117,23 @@ case 	CLASS_BARNACLE	:
 			Jump();
 		if ( wpt.hasFlags(W_FL_CROUCHJUMP) )
 		{
-			Jump();
+			if ( m_pNextWpt !is null )
+			{			
+				// need this
+				addToSchedule(CLongjumpTask(m_pNextWpt.m_vOrigin));
+			}
+			else// just jump --- and fall !!!
+			{
+				Jump(); // dooooooh!
+				BotMessage("Nooooo!\r\n");
+			}
 		}
 		
 
-		if( wpt.hasFlags(W_FL_HUMAN_TOWER) )
+		if( wpt.hasFlags(W_FL_HUMAN_TOWER) && m_pNextWpt !is null )
 		{
-			addToSchedule(CBotHumanTowerTask(wpt.m_vOrigin));
+			addToSchedule(CBotHumanTowerTask(wpt.m_vOrigin,m_pNextWpt.m_vOrigin,m_pNextWpt.m_iFlags));
 		}
-
 
 		if ( pThirdWpt !is null )
 		{
@@ -1216,26 +1315,38 @@ case 	CLASS_BARNACLE	:
 	}
 
 	// press button and go back to original waypoint
-	void pressButton ( CBaseEntity@ pButton, int iLastWpt )
+	void pressButton ( CBaseEntity@ pButton, int iLastWpt=-1, bool findPath = false )
 	{
-		//CFindPathTask ( RCBot@ bot, int wpt, CBaseEntity@ pEntity = null )
-		int iWpt = g_Waypoints.getNearestWaypointIndex(UTIL_EntityOrigin(pButton),pButton);
-		
-		if ( iWpt == -1 )
+		int iWpt = -1;
+
+		if ( findPath )
 		{
-			UTIL_DebugMsg(m_pPlayer,"pressButton() NO PATH",DEBUG_THINK);
-			return;
+			//CFindPathTask ( RCBot@ bot, int wpt, CBaseEntity@ pEntity = null )
+			iWpt = g_Waypoints.getNearestWaypointIndex(UTIL_EntityOrigin(pButton),pButton);
+			
+			if ( iWpt == -1 )
+			{
+				UTIL_DebugMsg(m_pPlayer,"pressButton() NO PATH",DEBUG_THINK);
+				return;
+			}
 		}
 
 		// don't overflow tasks
 		if ( m_pCurrentSchedule.numTasksRemaining() < 5 )
 		{
-			// This will be the third task
-			m_pCurrentSchedule.addTaskFront(CFindPathTask(this,iLastWpt));
+			if ( findPath )
+			{
+				// This will be the third task
+				m_pCurrentSchedule.addTaskFront(CFindPathTask(this,iLastWpt));
+			}
 			// This will be the second task
 			m_pCurrentSchedule.addTaskFront(CUseButtonTask(pButton));
-			// This will be the first task
-			m_pCurrentSchedule.addTaskFront(CFindPathTask(this,iWpt,pButton));
+
+			if ( findPath )
+			{
+				// This will be the first task
+				m_pCurrentSchedule.addTaskFront(CFindPathTask(this,iWpt,pButton));
+			}
 			
 
 			UTIL_DebugMsg(m_pPlayer,"pressButton() OK",DEBUG_THINK);
@@ -1265,6 +1376,13 @@ case 	CLASS_BARNACLE	:
 	{
 		return m_pWeapons.findBotWeapon("weapon_grapple");
 	}	
+
+	
+	CBotWeapon@ getGrenade ()
+	{
+		return m_pWeapons.findBotWeapon("weapon_handgrenade");
+	}	
+
 
 	CBotWeapon@ getExplosives ()
 	{
@@ -1386,14 +1504,22 @@ case 	CLASS_BARNACLE	:
 
 		m_fNextTakeCover = g_Engine.time;
 	}
-	
+
+	void TakeCoverFromGrenade ( CBaseEntity@ pGrenade )
+	{
+		if ( m_fNextTakeCover < g_Engine.time )
+		{
+			@m_pCurrentSchedule = CBotTaskFindCoverSchedule(this,UTIL_GrenadeEndPoint(pGrenade));
+			m_fNextTakeCover = g_Engine.time + Math.RandomFloat(6.0,12.0);
+		}			
+	}
 
 	void TakeCover ( Vector vOrigin )
 	{
 		if ( m_fNextTakeCover < g_Engine.time )
 		{
 			@m_pCurrentSchedule = CBotTaskFindCoverSchedule(this,vOrigin);
-			m_fNextTakeCover = g_Engine.time + 8.0;
+			m_fNextTakeCover = g_Engine.time + Math.RandomFloat(6.0,12.0);
 		}			
 	}
 
@@ -1633,13 +1759,9 @@ case 	CLASS_BARNACLE	:
 
 		if ( IsEnemy(ent) )
 		{
+			m_pEnemiesVisible.newEnemy(ent);
+
 			//BotMessage("NEW ENEMY !!!  " + ent.pev.classname + "\n");
-
-			if ( m_pEnemy.GetEntity() is null )
-				m_pEnemy = ent;
-			else if ( getEnemyFactor(ent) < getEnemyFactor(m_pEnemy) )
-				m_pEnemy = ent;		
-
 			m_fLastSeeEnemyTime = g_Engine.time;
 		}
 
@@ -1680,13 +1802,10 @@ case 	CLASS_BARNACLE	:
 
 	void lostVisible ( CBaseEntity@ ent )
 	{
-		if ( m_pEnemy.GetEntity() is ent )
-		{
-			m_pLastEnemy = m_pEnemy.GetEntity();
-			m_vLastSeeEnemy = m_pEnemy.GetEntity().pev.origin;
-			m_bLastSeeEnemyValid = true;
-			m_pEnemy = null;
-		}
+		//BotMessage("lost visible\n");
+
+
+		m_pEnemiesVisible.enemyLost(ent,this);
 
 		if ( m_pHeal.GetEntity() is ent )
 		{
@@ -1716,6 +1835,7 @@ case 	CLASS_BARNACLE	:
 
 			@m_pNextWpt = null;
 
+		m_pEnemiesVisible.clear();
 		m_flJumpPlatformTime = 0;
 		@m_pExpectedPlatform = null;
 		m_iLastWaypointFrom = -1;
@@ -1771,6 +1891,22 @@ case 	CLASS_BARNACLE	:
 	{
 		// update visible objects
 		m_pVisibles.update();
+		m_pEnemy = m_pEnemiesVisible.getBestEnemy(this);
+
+		BotEnemyLastSeen@ nearestLastSeen = m_pEnemiesVisible.nearestEnemySeen(this);
+
+		if ( nearestLastSeen !is null )
+		{
+			m_pLastEnemy = EHandle(nearestLastSeen.getEntity());
+			m_vLastSeeEnemy = nearestLastSeen.getLocation();
+			m_bLastSeeEnemyValid = true;
+		}
+		else 
+		{
+			m_pLastEnemy = null;
+			m_bLastSeeEnemyValid = false;
+		}
+				
 	}
 
 	void RemoveLastEnemy ()
@@ -1913,7 +2049,11 @@ case 	CLASS_BARNACLE	:
 		{
 			setLookAt(m_vHurtOrigin,PRIORITY_HURT);
 		}		
-		else if ( hasHeardNoise() )
+		else if ( m_pNextWpt !is null &&  m_pNextWpt.hasFlags(W_FL_JUMP) )
+		{
+			setLookAt(m_pNextWpt.m_vOrigin,PRIORITY_WAYPOINT);
+		}
+		else if ( hasHeardNoise() && (m_pEnemiesVisible.EnemiesVisible() == 0 ) )
 		{
 			setLookAt(m_vNoiseOrigin,PRIORITY_LISTEN);
 		}
@@ -1926,6 +2066,8 @@ case 	CLASS_BARNACLE	:
 			if ( m_pNextWpt !is null )
 			{
 				int index = m_pNextWpt.iIndex;
+
+
 
 				Vector vLookat = m_pNextWpt.m_vOrigin;
 
@@ -2069,4 +2211,278 @@ case 	CLASS_BARNACLE	:
 BotManager::BaseBot@ CreateRCBot( CBasePlayer@ pPlayer )
 {
 	return @RCBot( pPlayer );
+}
+
+
+final class BotEnemySeen
+{
+	EHandle pEnemy;
+	//Vector vLastKnown;	
+
+	BotEnemySeen ( CBaseEntity@ pent )
+	{
+		pEnemy = EHandle(pent);
+		//vLastKnown = Vector(0,0,0); // not used atm
+	}
+
+	bool isEnemy ( CBaseEntity@ pent )
+	{
+		return pEnemy.GetEntity() is pent;
+	}	
+
+	float getEnemyFactor ( RCBot@ bot )
+	{
+		CBaseEntity @entity = pEnemy.GetEntity();
+
+		float fFactor = bot.distanceFrom(entity.pev.origin) * entity.pev.size.Length();
+
+		if ( entity.GetClassname() == "func_breakable" )
+			fFactor *= 2;
+		else if ( entity.GetClassname() == "monster_male_assassin" )
+			fFactor /= 2;
+		// focus on nearly dead enemies
+		fFactor += entity.pev.health;
+
+		return fFactor;
+	}
+
+	/*bool LastKnownVisible ()
+	{
+		return bot.Visible(vLastKnown);
+	}*/
+
+}
+
+final class BotEnemyLastSeen
+{
+	Vector vLastSeen;
+	Vector vVelocity;
+	Vector vBotLocation;
+	EHandle pEnemy;
+
+	BotEnemyLastSeen ( CBaseEntity@ pent, RCBot@ bot )
+	{
+		pEnemy = EHandle(pent);
+		vLastSeen = UTIL_EntityOrigin(pent);
+		vBotLocation = bot.m_pPlayer.pev.origin;
+		vVelocity = pent.pev.velocity;
+	}
+
+	bool IsEntity ( CBaseEntity@ pent )
+	{
+		return pEnemy.GetEntity() is pent;
+	}
+
+	Vector getGrenadePosition ( )
+	{
+		// don't add velocity 
+		return vLastSeen;
+	}
+
+	CBaseEntity@ getEntity ()
+	{
+		return pEnemy.GetEntity();
+	}
+
+	// if invalid remove from list
+	// if valid use as potential view point
+	bool Valid ( RCBot@ bot )
+	{
+		CBaseEntity@ pent = pEnemy.GetEntity();
+
+		if ( pent is null )
+			return false;
+
+		// not dead - valid
+		return bot.IsEnemy(pent);
+	}	
+
+    // return possible enemy location
+	Vector getLocation ()
+	{
+		return vLastSeen + vVelocity;
+	}
+}
+
+final class BotEnemyLastSeenList
+{
+	array<BotEnemyLastSeen@> m_pList;
+	uint lastSeenMax = 3;
+
+	BotEnemyLastSeenList ()
+	{
+		m_pList = {};
+	}
+
+	BotEnemyLastSeen@ nearestEnemySeen ( RCBot@ bot )
+	{
+		// find within 4000 units
+		float min_distance = 4000.0;
+		BotEnemyLastSeen@ ret = null;
+
+		for ( uint i = 0; i < m_pList.length(); i ++ )
+		{
+			if ( m_pList[i].Valid(bot) )
+			{
+				float distance = bot.distanceFrom(m_pList[i].getEntity());
+
+				if ( distance < min_distance )
+				{
+					min_distance = distance;
+					@ret = m_pList[i];
+				}
+			}
+			
+		}
+
+		return ret;
+	}
+
+	void add ( CBaseEntity@ pent, RCBot@ bot )
+	{
+		// remove old position
+		remove(pent);
+		// add new position
+		if ( m_pList.length() > lastSeenMax )
+		{
+			m_pList.removeAt(0);
+		}
+
+		m_pList.push_back(BotEnemyLastSeen(pent,bot));
+	}
+
+	void remove ( CBaseEntity@ pent )
+	{
+		// find entity
+		for ( uint i = 0; i < m_pList.length(); i ++ )
+		{
+			if ( m_pList[i].IsEntity(pent) )
+			{
+				// found
+				m_pList.removeAt(i);
+				// removed
+				return;
+			}
+		}
+	}
+}
+
+final class BotEnemiesVisible
+{
+	array<BotEnemySeen@> enemiesVisible;
+	BotEnemyLastSeenList lastSeen;
+
+	uint maxLastSeen = 3;
+
+	void clear ()
+	{
+		enemiesVisible = {};
+	}
+
+	void newEnemy ( CBaseEntity@ pent )
+	{
+		enemiesVisible.push_back(BotEnemySeen(pent));
+	}
+
+	BotEnemyLastSeen@ nearestEnemySeen ( RCBot@ bot )
+	{		
+		return lastSeen.nearestEnemySeen(bot);
+	}
+
+	void enemyLost ( CBaseEntity@ pent, RCBot@ bot )
+	{
+		removeEnemy(pent);
+
+		lastSeen.add(pent,bot);
+	}
+
+	EHandle getBestEnemy ( RCBot@ bot )
+	{
+		uint i;
+		float min_factor = 0.0f;
+		EHandle ret = EHandle(null);
+		bool none = true;
+		array<BotEnemySeen@> toRemove;
+
+		for ( i = 0; i < enemiesVisible.length(); i ++ )
+		{
+			BotEnemySeen@ temp = @enemiesVisible[i];
+			float factor = 0;
+
+			if ( temp.pEnemy.GetEntity() is null )
+			{
+				toRemove.push_back(temp);
+				continue;
+			}
+
+			if ( !bot.IsEnemy(temp.pEnemy.GetEntity()) )
+			{
+				toRemove.push_back(temp);
+				continue;
+			}
+
+			factor = temp.getEnemyFactor(bot);
+//BotMessage("fator = " + factor);	
+			if ( none || (factor < min_factor) )
+			{			
+				none = false;
+				min_factor = factor;
+				ret = temp.pEnemy;
+			} 
+		}
+
+		clearIndices(toRemove);
+
+		//if ( ret.GetEntity() !is null )
+		//	BotMessage("Best enemy ==  " + ret.GetEntity().pev.classname + "\n");
+		//	else 
+		//	BotMessage("Best enemy == null :( length == " + enemiesVisible.length() + "  \n");
+
+		return ret;
+	}
+
+	int EnemiesVisible ()
+	{
+		return enemiesVisible.length();
+	}
+
+	void removeEnemy ( CBaseEntity@ pent )
+	{
+		uint i;
+	//	BotMessage("removeEnemy");
+		for ( i = 0; i < enemiesVisible.length(); i ++ )
+		{
+			BotEnemySeen@ temp = enemiesVisible[i];
+
+			if ( temp.isEnemy(pent) )
+			{
+				enemiesVisible.removeAt(i);					
+				return;
+			}
+		}
+	//	BotMessage("removeEnemy FAILED");
+	}
+
+	void clearIndices ( array<BotEnemySeen@> to_clear )
+	{
+		uint i;
+
+		while ( to_clear.length() > 0 )
+		{
+			BotEnemySeen@ toRemove = to_clear[0];
+
+			for ( i = 0; i < enemiesVisible.length(); i ++ )
+			{
+				BotEnemySeen@ temp = enemiesVisible[i];
+
+				if ( temp is toRemove )
+				{
+					enemiesVisible.removeAt(i);
+					to_clear.removeAt(0);
+					break;
+				}
+			}
+		}
+	}
+
 }

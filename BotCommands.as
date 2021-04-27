@@ -8,6 +8,7 @@
 
 CConCommand@ m_pRCBotWaypointConvertType;
 CConCommand@ m_pAddBot;
+CConCommand@ m_pRemoveBot;
 CConCommand@ m_pRCBotWaypointAdd;
 CConCommand@ m_pRCBotWaypointDelete;
 CConCommand@ m_pRCBotWaypointInfo;
@@ -47,6 +48,7 @@ CConCommand@ m_pRCBotWaypointPaste;
 CConCommand@ m_pRCBotWaypointMove1;
 CConCommand@ m_pRCBotWaypointMove2;
 CConCommand@ m_pBeliefDebug;
+CConCommand@ m_pRCBotWaypointAuto;
 
 CCVar@ m_pVisRevs;
 CCVar@ m_pNavRevs;
@@ -110,9 +112,11 @@ void PluginInit()
 	g_BotManager.PluginInit();
 	
 	@m_pAddBot = @CConCommand( "addbot", "Adds a new bot", @AddBotCallback );
+	@m_pRemoveBot = @CConCommand( "removebot", "Removes a bot", @RemoveBotCallback );
 
 	@m_pRCBotWaypointConvertType = @CConCommand( "waypoint_convert_type", "Convert waypoint type to other", @WaypointConvertType );
 //ConvertFlagsToOther WaypointConvertType
+	@m_pRCBotWaypointAuto = @CConCommand( "waypoint_auto", "Toggle auto waypoint", @AutoWaypoint );
 	@m_pRCBotWaypointOff = @CConCommand( "waypoint_off", "Display waypoints off", @WaypointOff );
 	@m_pRCBotWaypointOn = @CConCommand( "waypoint_on", "Displays waypoints on", @WaypointOn );
 	@m_pRCBotWaypointAdd = @CConCommand( "waypoint_add", "Adds a new waypoint", @WaypointAdd );
@@ -227,6 +231,31 @@ void TeleportWpt ( const CCommand@ args )
 		}
 	}
 
+}
+/**
+ * Increase bot quota
+ */
+void AddBotCallback( const CCommand@ args )
+{
+	int val = g_BotManager.m_iBotQuota+1;
+
+	if ( val > g_Engine.maxClients )
+		val = g_Engine.maxClients;
+
+	g_BotManager.m_iBotQuota = uint(val);
+}
+
+/**
+ * Increase bot quota
+ */
+void RemoveBotCallback( const CCommand@ args )
+{
+	int val = g_BotManager.m_iBotQuota-1;
+
+	if ( val < 0 )
+		val = 0;
+
+	g_BotManager.m_iBotQuota = uint(val);
 }
 
 void RCBot_Quota ( const CCommand@ args )
@@ -533,7 +562,7 @@ void WaypointGiveType ( const CCommand@ args )
 		}				
 	}	
 
-	g_Waypoints.playsound(player,flags>0&&wpt!=-1);
+	g_Waypoints.playsound(player,(flags>0)&&(wpt!=-1));
 }
 
 void WaypointClear ( const CCommand@ args )
@@ -606,26 +635,67 @@ void NoClipModeFunc ( const CCommand@ args )
 	}
 }
 
+final class RCBotSearchResult
+{
+	RCBotSearchResult ( CBaseEntity@ p, float dist )
+	{
+		@pent = p;
+		distance = dist;
+	}
+	CBaseEntity@ pent;
+	float distance;
+}
+
 void RCBotSearch ( const CCommand@ args )
 {
 	float distance = 200.0f;
-	CBaseEntity@ lp = ListenPlayer();
+	CBasePlayer@ lp = ListenPlayer();
 	Vector v = lp.pev.origin;
 	CBaseEntity@ pent = null;
 
+	string classname = "*";
+	bool extra_detail = false;
+
+	array<RCBotSearchResult@> results = {};
+
 	if ( args.ArgC() > 1 )
 		distance = atof(args[1]);
+	if ( args.ArgC() > 2 ) 
+		classname = args[2];
+	if ( args.ArgC() > 3 )
+		extra_detail = args[3] == "1";
 
-	while ( (@pent =  g_EntityFuncs.FindEntityByClassname(pent, "*")) !is null )
+	while ( (@pent = g_EntityFuncs.FindEntityByClassname(pent, classname)) !is null )
 	{
 		if ( (UTIL_EntityOrigin(pent) - v).Length() < distance )
 		{
-			int index = g_EntityFuncs.EntIndex(pent.edict());
-			
-			Vector vOrigin = UTIL_EntityOrigin(pent);
+			results.insertLast(RCBotSearchResult(pent,distance));
 
-			BotMessage("" + index + " : " + pent.GetClassname() + " frame="+pent.pev.frame + " distance = " + (vOrigin-v).Length() + " (x=" + vOrigin.x + ",y=" + vOrigin.y + ",z=" + vOrigin.z + ")" + " visible=" + ((pent.pev.effects & EF_NODRAW == EF_NODRAW)?"0":"1") + ",solid=" + pent.pev.solid + ",angle.x = " + pent.pev.angles.x + ", angle.y = " + pent.pev.angles.y + " active = " + (UTIL_ToggleIsActive(pent,lp) ? "1" : "0") );
+			if ( classname != "*" )
+			{
+				drawBeam (lp, lp.pev.origin, UTIL_EntityOrigin(pent), WptColor(255,255,255), 50 );
+			}
 		}
+	}
+
+	results.sort(function(a,b){return a.distance<b.distance;});
+			
+	for ( uint iIndex = 0; iIndex< results.length(); iIndex ++ )
+	{
+		RCBotSearchResult@ res = results[iIndex];
+	
+		@pent = res.pent;
+
+		int index = g_EntityFuncs.EntIndex(pent.edict());
+		
+		Vector vOrigin = UTIL_EntityOrigin(pent);
+
+		string message = "" + index + " : " + pent.GetClassname() + " frame="+pent.pev.frame + " distance = " + (vOrigin-v).Length() + " (x=" + vOrigin.x + ",y=" + vOrigin.y + ",z=" + vOrigin.z + ")" + " visible=" + ((pent.pev.effects & EF_NODRAW == EF_NODRAW)?"0":"1") + ",solid=" + pent.pev.solid + ",angle.x = " + pent.pev.angles.x + ", angle.y = " + pent.pev.angles.y + " active = " + (UTIL_ToggleIsActive(pent,lp) ? "1" : "0");
+
+		if ( extra_detail )
+			message = message + " health=" + pent.pev.health + " target=" + pent.pev.target + " targetname='"+pent.pev.targetname+"' sequence="+ pent.pev.sequence;
+
+		BotMessage(message);
 	}
 }
 
@@ -652,27 +722,6 @@ void RCBot_Kickbots( const CCommand@ args )
 // ------------------------------------
 // COMMANDS - 	start
 // ------------------------------------
-void AddBotCallback( const CCommand@ args )
-{
-	BotManager::BaseBot@ pBot = g_BotManager.CreateBot( );
-	/*if (m_pAutoConfig.GetBool()) {
-		File@ configFile = g_FileSystem.OpenFile( "scripts/plugins/BotManager/config/config.ini", OpenFile::READ);
-		if ( configFile !is null )
-			while ( !configFile.EOFReached() )
-			{
-				string fileLine; configFile.ReadLine( fileLine );
-				fileLine.Trim();
-				if ( fileLine.Length() > 1 ) {
-					if ( fileLine[0] == "!" ) {
-						NetworkMessage message( MSG_ONE, NetworkMessages::NetworkMessageType(9), pBot.Player.edict() );
-						message.WriteString( fileLine.SubString(1) );
-						message.End();
-					} else if ( fileLine[0] != "#" )
-						g_EngineFuncs.ServerCommand( fileLine );
-				}
-			}
-	}*/
-}
 
 void WaypointInfo ( const CCommand@ args )
 {
@@ -682,6 +731,21 @@ void WaypointInfo ( const CCommand@ args )
 void WaypointLoad ( const CCommand@ args )
 {
 	g_Waypoints.Load();
+}
+
+void AutoWaypoint ( const CCommand@ args )
+{
+	CBasePlayer@ player =  ListenPlayer();
+
+	if ( args.ArgC() > 1 )
+	{
+		if ( args.Arg(1) == "off" )
+			@player = null;
+	}
+
+	BotMessage("Auto waypoint " +( (player !is null) ? "enabled" : "disabled" ) );
+
+	g_Waypoints.AutoWaypoint(player);
 }
 
 void WaypointAdd ( const CCommand@ args )
@@ -699,7 +763,7 @@ void WaypointAdd ( const CCommand@ args )
 	if ( player.pev.flags & FL_DUCKING == FL_DUCKING )
 		flags = W_FL_CROUCH;
 
-	g_Waypoints.playsound(player,g_Waypoints.addWaypoint(player.pev.origin,flags,player));
+	g_Waypoints.playsound(player,g_Waypoints.addWaypoint(player.pev.origin,flags,player)!=-1);
 }
 
 void WaypointOff ( const CCommand@ args )

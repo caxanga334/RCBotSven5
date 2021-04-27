@@ -7,7 +7,7 @@
 CWaypoints g_Waypoints;
 CWaypointTypes g_WaypointTypes;
 
-const int W_FL_UNDEFINED_0 = (1<<0);//	= ((1<<0) + (1<<1));  /* allow for 4 teams (0-3) */
+const int W_FL_WATER = (1<<0);			// can go here in water only
 const int W_FL_WAIT_NO_PLAYER = (1<<1); // bots wait until space is clear to avoid over crowding
 const int W_FL_SCIENTIST = (1<<2); //	bot waits a while for allies to come by
 //const int W_FL_TEAM_SPECIFIC = (1<<2);  /* waypoint only for specified team */
@@ -205,6 +205,9 @@ class CWaypointTypes
 
 					switch ( flag )
 					{
+						case W_FL_WATER:
+							name = "water";
+							break;
 						case W_FL_WAIT_NO_PLAYER :
 							name = "wait_noplayer";
 							break;
@@ -711,7 +714,7 @@ class CWaypoints
 	int m_iPasteWaypointFlags = 0;
 	uint m_iMoveWaypointIndex = 0;
 	bool m_bMoveWaypointValid = false;
-
+	AutoWaypointer@ autoWaypointer = null;
 	CWaypointVisibility@ m_VisibilityTable = null;
 
 	CWaypoint@ getWaypointAtIndex ( uint idx )
@@ -776,16 +779,6 @@ class CWaypoints
 		playsound(player,m_bMoveWaypointValid);
 	}
 
-	void runVisibility ()
-	{
-		if ( m_VisibilityTable !is null )
-		{
-			m_VisibilityTable.run();
-	
-		}
-	
-
-	}
 
 	void WaypointsOn ( bool on )
 	{
@@ -939,7 +932,7 @@ class CWaypoints
 		return pWpt.iIndex;
 	}
 	
-	bool addWaypoint ( Vector vecLocation, int flags = 0, CBaseEntity@ ignore = null )
+	int addWaypoint ( Vector vecLocation, int flags = 0, CBaseEntity@ ignore = null, bool autoPath = true, bool autoType = true )
 	{
 		int index = freeWaypointIndex();
 
@@ -960,88 +953,99 @@ class CWaypoints
 
 				if ( flags & W_FL_UNREACHABLE  != W_FL_UNREACHABLE )
 				{
-					// auto path waypoint
-					for ( int i = 0; i < m_iNumWaypoints; i ++ )
+					if ( autoPath )
 					{
-						CWaypoint@ other = getWaypointAtIndex(i);
-
-						if ( other.hasFlags(W_FL_DELETED))
-							continue;
-
-						if ( other.hasFlags(W_FL_UNREACHABLE) )
-							continue;
-
-						if ( i == index )
-							continue;					
-
-						if ( added.distanceFrom(other.m_vOrigin) > m_pWPAutoPathDist.GetInt() )
-							continue;
-
-						if ( UTIL_IsReachable ( added.m_vOrigin, other.m_vOrigin, ignore ) )
+						// auto path waypoint
+						for ( int i = 0; i < m_iNumWaypoints; i ++ )
 						{
-							added.addPath(i);
+							CWaypoint@ other = getWaypointAtIndex(i);
+
+							if ( other.hasFlags(W_FL_DELETED))
+								continue;
+
+							if ( other.hasFlags(W_FL_UNREACHABLE) )
+								continue;
+
+							if ( i == index )
+								continue;					
+
+							if ( added.distanceFrom(other.m_vOrigin) > m_pWPAutoPathDist.GetInt() )
+								continue;
+
+							if ( UTIL_IsReachable ( added.m_vOrigin, other.m_vOrigin, ignore ) )
+							{
+								added.addPath(i);
+							}
+
+							if ( UTIL_IsReachable ( other.m_vOrigin, added.m_vOrigin, ignore ) )
+							{
+								other.addPath(index);
+							}						
+
+							
 						}
-
-						if ( UTIL_IsReachable ( other.m_vOrigin, added.m_vOrigin, ignore ) )
-						{
-							other.addPath(index);
-						}						
-
-						
 					}
 
-					CBaseEntity@ pent = null;
-					
-					while ( (@pent =  g_EntityFuncs.FindEntityByClassname(pent, "*")) !is null )
-					{					
-						string classname = pent.GetClassname();
+					if ( autoType )
+					{
+						CBaseEntity@ pent = null;
+						
+						while ( (@pent =  g_EntityFuncs.FindEntityByClassname(pent, "*")) !is null )
+						{					
+							string classname = pent.GetClassname();
 
-						float dist = (added.m_vOrigin - UTIL_EntityOrigin(pent)).Length();
+							float dist = (added.m_vOrigin - UTIL_EntityOrigin(pent)).Length();
 
-						if ( dist > 96 )
-							continue;
+							if ( dist > 96 )
+								continue;
 
-						if ( !UTIL_IsVisible(added.m_vOrigin,pent,ignore) )
-							continue;
+							if ( !UTIL_IsVisible(added.m_vOrigin,pent,ignore) )
+								continue;
 
-						if ( pent.pev.owner is null )
-						{				
-							// must be a respawnable item
-							if ( pent.pev.spawnflags & SF_NORESPAWN == 0 )
-							{
-								if ( classname.SubString(0,7) == "weapon_")
-									flags |= W_FL_WEAPON;
-								else if ( classname.SubString(0,5) == "ammo_")
-									flags |= W_FL_AMMO;
-								else if ( classname.SubString(0,11) == "item_health")
-									flags |= W_FL_HEALTH;
-								else if ( classname.SubString(0,12) == "item_battery")
-									flags |= W_FL_ARMOR;
+							if ( pent.pev.owner is null )
+							{				
+								// must be a respawnable item
+								if ( pent.pev.spawnflags & SF_NORESPAWN == 0 )
+								{
+									if ( classname.SubString(0,7) == "weapon_")
+										flags |= W_FL_WEAPON;
+									else if ( classname.SubString(0,5) == "ammo_")
+										flags |= W_FL_AMMO;
+									else if ( classname.SubString(0,11) == "item_health")
+										flags |= W_FL_HEALTH;
+									else if ( classname.SubString(0,12) == "item_battery")
+										flags |= W_FL_ARMOR;
+								}
 							}
+
+							if ( classname.SubString(0,11) == "func_button")
+								flags |= W_FL_IMPORTANT;
+							else if ( classname.SubString(0,15) == "func_rot_button")
+								flags |= W_FL_IMPORTANT;						
+							else if ( classname.SubString(0,11) == "func_health" )
+								flags |= W_FL_HEALTH;
+							else if ( classname.SubString(0,13) == "func_recharge" )
+								flags |= W_FL_ARMOR;
+							else if ( classname.SubString(0,12) == "trigger_hurt" )
+								flags |= W_FL_PAIN;			
+							else if ( classname == "trigger_changelevel" )
+								flags |= W_FL_ENDLEVEL;
+
+							BotMessage(classname);
 						}
 
-						if ( classname.SubString(0,11) == "func_button")
-							flags |= W_FL_IMPORTANT;
-						else if ( classname.SubString(0,15) == "func_rot_button")
-							flags |= W_FL_IMPORTANT;						
-						else if ( classname.SubString(0,11) == "func_health" )
-							flags |= W_FL_HEALTH;
-						else if ( classname.SubString(0,13) == "func_recharge" )
-							flags |= W_FL_ARMOR;
-						else if ( classname.SubString(0,12) == "trigger_hurt" )
-							flags |= W_FL_PAIN;			
-
-						BotMessage(classname);
+						if ( g_EngineFuncs.PointContents(vecLocation) == CONTENTS_WATER )
+							flags |= W_FL_WATER;
 					}
 				}
 
 
 			m_Waypoints[index].m_iFlags = flags;
 
-			return true;
+			return index;
 		}
 
-		return false;
+		return -1;
 	}
 
 	int getIncompleteObjective (CBaseEntity@ pBot)
@@ -1385,6 +1389,9 @@ class CWaypoints
 		
 		File@ f;
 
+		// clear the auto waypointer
+		@autoWaypointer = null;
+
 		filename += ".rcwa";		
 
 		ClearWaypoints();
@@ -1513,6 +1520,29 @@ class CWaypoints
 
 		return ret;
 	}
+
+	void AutoWaypoint ( CBasePlayer@ player )
+	{
+		if ( player !is null )
+			@autoWaypointer = AutoWaypointer(player);
+		else 
+			@autoWaypointer = null;
+	}
+
+	void Think ( )
+	{
+		if ( m_VisibilityTable !is null )
+		{
+			m_VisibilityTable.run();
+		}
+
+		if ( autoWaypointer !is null )
+		{
+			autoWaypointer.Think();
+		}
+	}
+
+	
 }
 
 class RCBotWaypointBeliefSorter
@@ -2127,9 +2157,13 @@ final class RCBotNavigator
 								// It has a button ?
 								CBaseEntity@ pButton = UTIL_FindButton(pDoor,bot.m_pPlayer);
 
+								UTIL_DebugMsg(bot.m_pPlayer,"UTIL_FindButton()",DEBUG_NAV);
+
 								if ( pButton !is null )
 								{								
-									bot.pressButton(pButton,m_iCurrentWaypoint);
+									UTIL_DebugMsg(bot.m_pPlayer,"pButton !is null",DEBUG_NAV);
+
+									bot.pressButton(pButton,m_iCurrentWaypoint,true);
 									bUse = false;
 								}
 						
@@ -2250,6 +2284,15 @@ final class RCBotNavigator
 								// add extra cost to human tower waypoints
 								if ( currWpt.hasFlags(W_FL_HUMAN_TOWER) )
 									fCost += 512.0f;
+								
+							    if ( succWpt.m_vOrigin.z < currWpt.m_vOrigin.z )
+								{
+									if ( bot.HealthPercent() > 0 )
+									{
+										// add extra cost to high heights
+										fCost += (succWpt.m_vOrigin.z - currWpt.m_vOrigin.z) / bot.HealthPercent();
+									}
+								}
 
 								if ( succ.isOpen() || succ.isClosed() )
 								{
@@ -2506,3 +2549,255 @@ final class AStarOpenList
 	
 	private AStarListNode@ m_Head;
 };
+
+const int Run = 0;
+const int Jumping = 1;
+const int OnLadder = 2;
+const int Standing = 3;
+const int Swimming = 4;
+const int Falling = 5;
+const float AutoWaypointTypeDistance = 64.0f;
+const float AutoWaypointPathDistance = 200.0f;
+const int iLastPositionsMax = 10;
+const float RunWaypointCheckTime = 0.33f;
+
+class AutoWaypointer 
+{
+	float m_fRunCheckTime;
+	CBasePlayer@ m_pPlayer;
+	CWaypoint@ previousWaypoint;
+	array<Vector> vLastPositions;
+	int State;
+	Vector vJumpWaypointLocation;
+	Vector vFallLocation;
+
+	AutoWaypointer ( CBasePlayer@ pPlayer )
+	{
+		@m_pPlayer = pPlayer;
+		@previousWaypoint = null;
+		m_fRunCheckTime = 0;
+		vLastPositions = array<Vector>();
+		State = Standing;
+	}
+
+	void CreateWaypoint ( Vector vPosition, float fDistance, int flags, bool singlePath = false )
+	{	
+		// check for existing waypoint
+		int wpt = g_Waypoints.getNearestWaypointIndex(vPosition,m_pPlayer,-1,fDistance,true);
+
+		if ( wpt == -1 )
+		{
+			// no exisitng waypoint - create one
+			if ( m_pPlayer.pev.flags & FL_DUCKING == FL_DUCKING )
+				flags |= W_FL_CROUCH; // make sure its a crouch waypoint if crouching
+
+			// add a waypoint - automatic paths at the moment
+			wpt = g_Waypoints.addWaypoint(vPosition,flags,m_pPlayer);
+			
+			// play sound if displaying
+			if ( g_Waypoints.g_WaypointsOn )
+				g_Waypoints.playsound(m_pPlayer,wpt!=-1);
+		}
+		
+		if ( wpt != -1 )
+		{
+			// we've got a new current waypoint
+			CWaypoint@ currentWaypoint = g_Waypoints.getWaypointAtIndex(wpt);
+
+			// add path from previous waypoint to current waypoint
+			if ( previousWaypoint !is null )
+			{
+				if ( singlePath ) // keep a single path (remove existing) for this waypoint
+					currentWaypoint.removePaths();
+
+				previousWaypoint.addPath(wpt);
+			}
+
+			@previousWaypoint = currentWaypoint;
+			currentWaypoint.addWaypointType(flags);
+		}
+		else 
+			@previousWaypoint = null;
+	}
+
+	// if at any point the previous waypoint becomes invisible
+	// check intermediate points until both previous and current waypoint position becomes visible.
+	void CheckPreviousPoints ()
+	{
+		TraceResult tr;
+
+		vLastPositions.push_back(m_pPlayer.pev.origin);
+
+		if ( vLastPositions.size() > iLastPositionsMax )
+			vLastPositions.removeAt(0);
+
+		if ( previousWaypoint !is null )
+		{
+			g_Utility.TraceLine( m_pPlayer.pev.origin, previousWaypoint.m_vOrigin, ignore_monsters,dont_ignore_glass, m_pPlayer.edict(), tr );
+
+			if ( tr.flFraction < 1.0 )	
+			{
+				// find which last point is visible to previous waypoint and current waypoint
+				for ( uint i = 0; i < vLastPositions.size(); i ++ )
+				{
+					TraceResult tr1;
+					TraceResult tr2;
+
+					g_Utility.TraceLine( m_pPlayer.pev.origin, vLastPositions[i], ignore_monsters,dont_ignore_glass, m_pPlayer.edict(), tr1 );
+					g_Utility.TraceLine( vLastPositions[i], previousWaypoint.m_vOrigin, ignore_monsters,dont_ignore_glass, m_pPlayer.edict(), tr2 );	
+
+					if ( tr1.flFraction >= 1.0 && tr2.flFraction >= 1.0 )
+					{
+						// Add Waypoint Here
+						CreateWaypoint(vLastPositions[i],32.0,0);
+						return;
+					}
+					
+				}
+
+				
+				// Add Waypoint Here
+				CreateWaypoint(m_pPlayer.pev.origin,AutoWaypointTypeDistance,0);
+
+				return;
+			}
+		}
+
+		m_fRunCheckTime = g_Engine.time + RunWaypointCheckTime;
+
+		if ( @previousWaypoint !is null )
+		{
+			if ( previousWaypoint.distanceFrom(m_pPlayer.pev.origin) > AutoWaypointPathDistance )
+				CreateWaypoint(m_pPlayer.pev.origin,AutoWaypointPathDistance,0);
+		}
+		// normal shiz
+		else 
+			CreateWaypoint(m_pPlayer.pev.origin,AutoWaypointPathDistance,0);
+	}
+
+	void Think ()
+	{
+		if ( !m_pPlayer.IsAlive() )
+		{
+			@previousWaypoint = null;
+			m_fRunCheckTime = 0;
+			State = Standing;
+			vLastPositions = {};
+			return;
+		}
+
+		if ( previousWaypoint !is null )
+		{
+			// check previous waypoint is still used
+			if ( previousWaypoint.isDeleted() )
+				@previousWaypoint = null;
+		}
+
+		switch ( State )
+		{
+		case Swimming:
+			if ( m_pPlayer.pev.waterlevel < 3 )
+				State = Run;
+			else 
+			{
+				CheckPreviousPoints();
+			}
+			break;
+		case Run:
+		
+			if ( m_pPlayer.pev.waterlevel >= 3 )
+			{
+				State = Swimming;
+			}
+			else if ( m_pPlayer.pev.button & IN_JUMP == IN_JUMP )
+			{
+				State = Jumping;
+				vJumpWaypointLocation = m_pPlayer.pev.origin;
+				vLastPositions = {};
+			}
+			else if ( m_pPlayer.IsOnLadder() )
+			{
+				State = OnLadder;
+				// Add waypoint
+				CreateWaypoint(m_pPlayer.pev.origin,AutoWaypointTypeDistance,W_FL_LADDER);
+				vLastPositions = {};
+			}
+			else if ( m_pPlayer.pev.flags & FL_ONGROUND != FL_ONGROUND )
+			{
+				State = Falling;
+				vFallLocation = m_pPlayer.pev.origin;
+			}
+			else if ( m_fRunCheckTime < g_Engine.time ) 
+			{
+				CheckPreviousPoints();
+			}
+			else if ( m_pPlayer.pev.velocity.Length() < 1 )
+			{
+				State = Standing;
+			}
+
+		break;
+		case Standing:
+			// don't do anything if standing still , even if jumping cos we won't go anywhere
+			if ( m_pPlayer.pev.velocity.Length() > 1 )
+			{
+				State = Run;
+			}
+		break;
+		case Falling:
+			if ( m_pPlayer.pev.flags & FL_ONGROUND == FL_ONGROUND )
+			{
+				State = Run;
+				CreateWaypoint(vFallLocation,AutoWaypointTypeDistance,0,true);
+				// Add Waypoint
+				CreateWaypoint(m_pPlayer.pev.origin,200.0f,0);
+			}
+			else if ( m_pPlayer.IsOnLadder())
+			{
+				State = OnLadder;
+				// Add waypoint
+				CreateWaypoint(m_pPlayer.pev.origin,AutoWaypointTypeDistance,W_FL_LADDER);
+			}
+			break;
+		case Jumping:
+			if ( m_pPlayer.pev.flags & FL_ONGROUND == FL_ONGROUND )
+			{
+				State = Run;
+				CreateWaypoint(vJumpWaypointLocation,AutoWaypointTypeDistance,W_FL_JUMP,true);
+				// Add Waypoint
+				CreateWaypoint(m_pPlayer.pev.origin,AutoWaypointTypeDistance,0);
+			}
+			else if ( m_pPlayer.IsOnLadder())
+			{
+				State = OnLadder;
+				// Add waypoint
+				CreateWaypoint(m_pPlayer.pev.origin,AutoWaypointTypeDistance,W_FL_LADDER);
+			}
+		break;
+		case OnLadder:
+			if ( m_pPlayer.pev.button & IN_JUMP == IN_JUMP )
+			{
+				State = Jumping;
+				// Add Jump waypoint
+				vJumpWaypointLocation = m_pPlayer.pev.origin;
+			}
+			else if ( !m_pPlayer.IsOnLadder())
+			{
+				Vector vForward;
+
+				g_EngineFuncs.MakeVectors(m_pPlayer.pev.v_angle);
+
+				vForward = g_Engine.v_forward;
+				// make 2D
+				vForward.z = 0;
+				vForward = vForward.Normalize();
+
+				State = Run;
+				// Add waypoint
+				CreateWaypoint(m_pPlayer.pev.origin+(vForward*16.0f),48.0f,W_FL_LADDER);
+			}
+		break;
+
+		}
+	}
+}

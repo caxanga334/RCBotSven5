@@ -646,7 +646,18 @@ final class CFindButtonTask : RCBotTask
 
         if ( pent !is null )
         {
-                        UTIL_DebugMsg(bot.m_pPlayer,"func_rot_button",DEBUG_TASK);
+                UTIL_DebugMsg(bot.m_pPlayer,"func_rot_button",DEBUG_TASK);
+                // add Task to pick up health
+                m_pContainingSchedule.addTask(CUseButtonTask(pent));
+                Complete();
+                return;                                    
+        }
+
+        @pent = UTIL_FindNearestEntity("func_door_rotating",bot.m_pPlayer.EyePosition(),REACHABLE_PICKUP_RANGE,true,false);
+
+        if ( pent !is null )
+        {
+                        UTIL_DebugMsg(bot.m_pPlayer,"func_door_rotating",DEBUG_TASK);
                         // add Task to pick up health
                         m_pContainingSchedule.addTask(CUseButtonTask(pent));
                         Complete();
@@ -680,11 +691,55 @@ final class CFindButtonTask : RCBotTask
     }
 }
 
+final class CLongjumpTask: RCBotTask
+{
+    float m_fCrouchtime = 0.0f;
+    Vector m_vTo;
+    CLongjumpTask (Vector vTo)
+    {
+        m_vTo = vTo;
+    }
+
+    bool jump = false;
+
+    void execute ( RCBot@ bot )
+    {
+        bot.setMove(m_vTo);
+        bot.setLookAt(m_vTo);
+
+        /*if ( jump == false )
+        {
+           // BotMessage("velocity = " + bot.m_pPlayer.pev.velocity.Length2D()+"\r\n");
+            if ( bot.m_pPlayer.pev.velocity.Length2D() > 80 ) // minimum long jump speed
+                jump = true;
+        }
+        else 
+        {        */   
+           // BotMessage("DUCK\r\n");
+            bot.PressButton(IN_DUCK);
+
+            if ( m_fCrouchtime == 0.0f )
+                m_fCrouchtime = g_Engine.time + 0.15f;
+            if ( m_fCrouchtime < g_Engine.time )
+            {
+                bot.Jump();
+                Complete();
+            }
+        //}
+        
+        
+    }
+}
+
 final class CUseButtonTask : RCBotTask
 {
     EHandle m_pButton;
     bool m_bIsMomentary;
     bool m_bMomentaryStarted;
+    float m_fMomentaryHoldTime;
+    Vector vOrigin;
+    bool m_bIsShootable;
+    int prev_frame = 0;
     
     string DebugString ()
     {
@@ -694,34 +749,68 @@ final class CUseButtonTask : RCBotTask
     CUseButtonTask ( CBaseEntity@ button )
     {
         m_pButton = button;
-        m_fDefaultTimeout = 10.0f;
+
+        prev_frame = int(button.pev.frame);
+
+        m_fMomentaryHoldTime = 0.0f;
+
+        m_bIsShootable = button.pev.health>0;
+
+        vOrigin = UTIL_EntityOrigin(button);
+        
         m_bIsMomentary = (button.GetClassname() == "momentary_rot_button")||(button.GetClassname() == "func_rot_button");
+
+        if ( m_bIsMomentary )
+            m_fDefaultTimeout = 20.0f;
+        else
+        {
+            m_fDefaultTimeout = 10.0f;
+            vOrigin = vOrigin + Vector(0,0,Math.RandomFloat(-button.pev.size.z/4,button.pev.size.z/4));
+        }
+
         m_bMomentaryStarted = false;
     } 
 
     void execute ( RCBot@ bot )
     {
         CBaseEntity@ pButton = m_pButton.GetEntity();
+        CBotWeapon@ pBestWeapon = null;
 
         if ( pButton is null )
         {
             Complete();
             return;
         }
-        Vector vOrigin = UTIL_EntityOrigin(pButton);
+
+        @pBestWeapon = bot.m_pWeapons.findBestWeapon(bot,UTIL_EntityOrigin(pButton),pButton);        
+       
         float fButtonVelocity = pButton.pev.avelocity.Length();
 
-        if ( pButton.pev.frame != 0 )
+        if ( pButton.pev.frame != int(prev_frame) )
             Complete();
         else if ( m_bIsMomentary && m_bMomentaryStarted )
         {
             if ( fButtonVelocity == 0.0 )
-                Complete();
+            {
+                if ( m_fMomentaryHoldTime == 0.0 )
+                    m_fMomentaryHoldTime = g_Engine.time + Math.RandomFloat(3.0f,10.0f);
+                else if ( m_fMomentaryHoldTime < g_Engine.time )   
+                    Complete();
+            }
         }
 
         bot.setLookAt(vOrigin,PRIORITY_TASK+1);
 
-        if ( (vOrigin-bot.m_pPlayer.pev.origin).Length2D() > 70 )
+        if ( m_bIsShootable )
+        {
+            if ( pBestWeapon !is null && !bot.isCurrentWeapon(pBestWeapon) )
+            {
+                bot.selectWeapon(pBestWeapon);            
+                return;
+            }     
+        }
+
+        if ( (!m_bIsShootable||(pBestWeapon is null)||pBestWeapon.IsMelee()) && (vOrigin-bot.m_pPlayer.pev.origin).Length2D() > 70 )
         {
             bot.setMove(vOrigin);
             UTIL_DebugMsg(bot.m_pPlayer,"bot.setMove(vOrigin)",DEBUG_TASK);
@@ -747,9 +836,17 @@ final class CUseButtonTask : RCBotTask
              {
                 UTIL_DebugMsg(bot.m_pPlayer,"bot.PressButton(IN_USE)",DEBUG_TASK);            
 
-                if ( m_bIsMomentary || ( Math.RandomLong(0,100) < 99)  )
+                if ( m_bIsMomentary || ( Math.RandomLong(0,100) < 50)  )
                 {
-                    bot.PressButton(IN_USE);
+                    if ( m_bIsShootable )
+                    {
+                        bot.PressButton(IN_ATTACK);
+                    }
+                    else                         
+                        bot.PressButton(IN_USE);
+
+                    if ( !m_bIsMomentary )
+                        vOrigin = UTIL_EntityOrigin(pButton) + Vector(0,0,Math.RandomFloat(-pButton.pev.size.z/4,pButton.pev.size.z/4));
                 }
              }
 
@@ -880,11 +977,13 @@ final class CBotButtonTask : RCBotTask
         }
 
         if ( m_fStartTime == 0.0f )
-            m_fStartTime = g_Engine.time + 1.0f;
+            m_fStartTime = g_Engine.time + Math.RandomLong(2.0,4.0);
         else if ( m_fStartTime < g_Engine.time )
             Complete();
-
-        bot.PressButton(m_iButton);
+        bot.StopMoving();
+        
+        if ( Math.RandomLong(0,100) > 50 )
+            bot.PressButton(m_iButton);
     }
 }
 
@@ -976,6 +1075,15 @@ class CFindPathSchedule : RCBotSchedule
     }
 }
 
+class CThrowGrenadeSchedule : RCBotSchedule 
+{
+    CThrowGrenadeSchedule ( RCBot@ bot, Vector vThrowTo )
+    {       
+        addTask(CBotThrowGrenade(bot,vThrowTo));
+        addTask(CBotTaskFindCoverTask(bot,vThrowTo));
+        addTask(CBotTaskWait(1.0,vThrowTo));
+    }
+}
 
 class CBotTaskFindCoverSchedule : RCBotSchedule
 {    
@@ -986,6 +1094,73 @@ class CBotTaskFindCoverSchedule : RCBotSchedule
         addTask(CBotButtonTask(IN_RELOAD));
     }
     
+}
+
+class CBotThrowGrenade : RCBotTask
+{
+    Vector vThrowTo;
+    float m_fWaitTime;
+
+    int MAX_GREN_THROW_DIST = 800;
+
+    CBotThrowGrenade ( RCBot@ bot, Vector throwTo )
+    {
+        float distance = bot.distanceFrom(throwTo);
+        
+        float fFraction = distance/MAX_GREN_THROW_DIST;
+        m_fWaitTime = 0.0f;
+        vThrowTo = throwTo;
+		// add gravity offset
+		vThrowTo.z += (800 *  Math.RandomFloat(0.8f,1.2f) * fFraction);      
+    }
+
+    string DebugString ()
+    {
+        return "CBotThrowGrenade";
+    }
+
+    void execute ( RCBot@ bot )
+    {
+        CBotWeapon@ pGrenade = bot.getGrenade();
+        CBaseEntity@ pPlayer = bot.m_pPlayer;
+
+          // stop bot from attacking enemies whilst healing
+        bot.ceaseFire(true);
+
+        if ( pGrenade is null )
+        {
+                Failed();
+                return;
+        }
+
+        if ( pGrenade.getPrimaryAmmo(bot) == 0 )
+        {
+            Failed();
+            return;
+        }        
+
+        if ( !bot.isCurrentWeapon(pGrenade) )
+        {
+            bot.selectWeapon(pGrenade);
+            return;
+        }
+
+        bot.StopMoving();
+        bot.setLookAt(vThrowTo);
+
+         if ( m_fWaitTime == 0.0f )
+            m_fWaitTime = g_Engine.time + 1.0f; // hold for one second
+        else if ( m_fWaitTime < g_Engine.time )
+        {
+            Complete();        
+            // stop bot from attacking enemies whilst healing
+            bot.ceaseFire(false);
+
+        }
+        else // else hold the button
+            bot.PressButton(IN_ATTACK);
+        
+    }
 }
 
 class CGrappleTask : RCBotTask
@@ -1144,15 +1319,17 @@ class CBotTaskRevivePlayer : RCBotTask
 class CBotTaskFollow : RCBotTask
 {
     EHandle m_pFollow;
+    bool LostPlayer = false;
     float m_fLastVisibleTime;
     string DebugString ()
     {
         return "CBotTaskRevivePlayer";
     }
-     CBotTaskFollow ( CBaseEntity@ pFollow )
+     CBotTaskFollow ( CBaseEntity@ pFollow, bool lostPlayer )
      {
          m_pFollow = pFollow;
          m_fLastVisibleTime = 0.0f;
+         LostPlayer = lostPlayer;
      }
 
      void execute ( RCBot@ bot )
@@ -1171,10 +1348,29 @@ class CBotTaskFollow : RCBotTask
         if ( m_fLastVisibleTime == 0.0f )
             m_fLastVisibleTime = g_Engine.time + 3.0f;
         else if ( bot.isEntityVisible(pFollow) )
-            m_fLastVisibleTime = g_Engine.time + 3.0f;
+        {
+            m_fLastVisibleTime = g_Engine.time + 1.0f;
+            LostPlayer = false;
+        }
         else if ( m_fLastVisibleTime < g_Engine.time )
         {
-            Failed();
+            if ( !LostPlayer )
+            {
+                int iWpt = g_Waypoints.getNearestWaypointIndex(UTIL_EntityOrigin(pFollow),null,-1,400.0,true,false);
+
+                if ( iWpt == -1 )
+                {
+                    Failed();
+                }
+                else 
+                {
+                    m_pContainingSchedule.addTask(CFindPathTask(bot,iWpt,pFollow));                
+                    m_pContainingSchedule.addTask(CBotTaskFollow(pFollow,true));
+                    Complete();
+                }
+            }
+            else 
+                Failed();
             return;
         }
 
@@ -1507,98 +1703,156 @@ class CBotTaskHealPlayer : RCBotTask
      }
 }
 
+    enum State_Role
+  {
+    State_DetectRole,
+    State_Role_Below,
+    State_Role_OnTop,
+    State_Role_OnTop_MoveToGoal
+  };
 class CBotHumanTowerTask : RCBotTask
 {
-    Vector m_vOrigin;
+    Vector m_vGround;
+    Vector m_vGoal;
+    int m_iFlags;
     float m_fTime;
     float m_fJumpTime;
 
-        string DebugString ()
+    string DebugString ()
     {
-        return "CBotHumanTowerTask";
+        string ret = "CBotHumanTowerTask (";
+
+         switch ( State )
+         {
+            case State_DetectRole:
+            ret += "State_DetectRole)";
+            break;
+            case State_Role_Below:
+ret += "State_Role_Below)";
+            break;
+            case State_Role_OnTop:
+ret += "State_Role_OnTop)";
+            break;
+            case State_Role_OnTop_MoveToGoal:
+ret += "State_Role_OnTop_MoveToGoal)";
+            break;
+         }
+
+        return ret;
     } 
 
-    CBotHumanTowerTask ( Vector vOrigin )
+    CBotHumanTowerTask ( Vector vGround, Vector vGoal, int iFlags )
     {
-        m_vOrigin = vOrigin;
-
+        m_vGround = vGround;
+        m_vGoal = vGoal;
        // setTimeout(15.0f);
         m_fTime = 0.0f;
         m_fJumpTime = 0.0f;
+        m_iFlags=iFlags;
     }
 
+   
+   State_Role State = State_DetectRole;
+   
      void execute ( RCBot@ bot )
      {
-         CBasePlayer@ groundPlayer = UTIL_FindNearestPlayer(m_vOrigin,128,bot.m_pPlayer,true);
-
-         if ( m_fTime == 0.0f ) 
-            m_fTime = g_Engine.time + 10.0f; // wait for ten second max
-        else if ( m_fTime < g_Engine.time )
-            Failed();
-
-        bot.setMoveSpeed(bot.m_pPlayer.pev.maxspeed/2);
-
-         if ( groundPlayer !is null )
+         CBasePlayer@ groundPlayer = UTIL_FindNearestPlayer(m_vGround,64,bot.m_pPlayer,true,false,FL_ONGROUND&FL_DUCKING);
+// search for a player near the ground point, ignoring me
+            
+         switch ( State )
          {
-            Vector vPlayer = UTIL_EntityOrigin(groundPlayer);            
-
-            if ( UTIL_yawAngleFromEdict(vPlayer,bot.m_pPlayer.pev.v_angle,bot.m_pPlayer.pev.origin) < 15 )    
-                bot.setMove(vPlayer);
-
-            bot.setLookAt(vPlayer);
-
-            m_fTime = g_Engine.time + 5.0f; // wait for another six second max
-
-            if ( bot.m_pPlayer.pev.groundentity is groundPlayer.edict() )
-            {
-                
-                bot.StopMoving();
-
-                if ( m_fJumpTime == 0.0f )
-                    m_fJumpTime = g_Engine.time + 1.5f;
-                else if ( m_fJumpTime < g_Engine.time )
+             case State_DetectRole:
+                m_fTime = g_Engine.time+Math.RandomFloat(10.0,20.0);
+                if ( groundPlayer is null )
                 {
-                    bot.PressButton(IN_JUMP);
-                    Complete();
+                    State = State_Role_Below;
                 }
-            }
+                else 
+                    State = State_Role_OnTop;
+             break;
+             case State_Role_Below:
 
-            else if ( bot.distanceFrom(groundPlayer) < 96 )
-            {
-                if ( Math.RandomLong(0,100) > 50 )
-                    bot.PressButton(IN_JUMP);
-            }
-         }
-         else
-         {
-            if ( bot.distanceFrom(m_vOrigin) > 96 )
-            {
-                bot.setMove(m_vOrigin);
-
-                UTIL_DebugMsg(bot.m_pPlayer,"bot.distanceFrom(m_vOrigin) > 96",DEBUG_TASK);
-            }
-            else 
-            {
-                CBaseEntity@ playerOnTop = UTIL_FindNearestPlayerOnTop(bot.m_pPlayer);
-
-                if ( playerOnTop !is null  )
+                if ( m_fTime < g_Engine.time && groundPlayer !is null )
+                {                                 
+                    State = State_DetectRole;
+                    break;
+                }
+                // go to ground position and crouch until player is on top of me
+                if ( bot.distanceFrom(m_vGround) > 64 )
+                    bot.setMove(m_vGround);
+                else 
                 {
-                    UTIL_DebugMsg(bot.m_pPlayer,"playerOnTop !is null",DEBUG_TASK);
+                    CBaseEntity@ playerOnTop = UTIL_FindNearestPlayerOnTop(bot.m_pPlayer);
+                    
+                    bot.StopMoving();
 
-                    // stand up 
-                    // look at player
-                    bot.setLookAt(UTIL_EntityOrigin(playerOnTop));
-
-                    m_fTime = g_Engine.time + 6.0f; // wait for another six second max
+                    // if I have a player on top, stop crouching
+                    if ( playerOnTop is null  )       
+                    {             
+                         bot.PressButton(IN_DUCK);
+                         // BotMessage("ducking...");
+                    }
+                    else 
+                        bot.setLookAt(UTIL_EntityOrigin(playerOnTop));
+                     //else                         
+				     //   BotMessage("playerOnTop is NOT NULL!!!!");
+                }
+             break;
+             case State_Role_OnTop:
+               
+                if ( groundPlayer is null )
+                {
+                    // wrong role
+                  
+                        State = State_DetectRole;
                 }
                 else 
                 {
-                    bot.PressButton(IN_DUCK);
+                    if ( bot.m_pPlayer.pev.groundentity !is null )
+                    {
+                        if ( bot.m_pPlayer.pev.groundentity.vars.flags & FL_CLIENT == FL_CLIENT )
+                        {
+                            State = State_Role_OnTop_MoveToGoal;
+                            m_fJumpTime = g_Engine.time + Math.RandomLong(3.0,6.0);
+                            break;
+                        }
+                    }
+
+                    Vector vOrigin = UTIL_EntityOrigin(groundPlayer);
+
+                    bot.setLookAt(vOrigin);
+                    bot.setMove(vOrigin);
+
+                   
+                    if ( Math.RandomLong(0,100) > 50 )
+                        bot.PressButton(IN_JUMP);
+                                
                 }
 
-                bot.StopMoving();
-            }
+             break;
+             case State_Role_OnTop_MoveToGoal:
+
+                if ( m_fJumpTime < g_Engine.time )
+                {
+                    State = State_DetectRole;
+                    break;
+                }
+
+                bot.setMove(m_vGoal);
+                bot.setLookAt(m_vGoal);
+                
+                if ( Math.RandomLong(0,100) > 50 )
+                    bot.PressButton(IN_JUMP);
+
+                if ( bot.distanceFrom(m_vGoal) < 64 )
+                    Complete();
+
+                if ( m_iFlags & W_FL_CROUCH == W_FL_CROUCH )
+                    bot.PressButton(IN_DUCK);
+
+             break;
          }
+   
      }
 }
 
@@ -1792,7 +2046,8 @@ class CBotHealPlayerUtil : CBotUtil
 {
     float calculateUtility ( RCBot@ bot )
     {        
-        return 0.9f;
+        // reduced utility 15/03/21
+        return 1.0f - (bot.m_pEnemiesVisible.EnemiesVisible()*0.2f);
     }
 
     string DebugMessage ()
@@ -1830,6 +2085,81 @@ class CBotHealPlayerUtil : CBotUtil
     }
 }
 
+class CBotFindCoverUtil : CBotUtil
+{
+    float calculateUtility ( RCBot@ bot )
+    {        
+        return (1.0f - bot.HealthPercent()) * bot.m_pEnemiesVisible.EnemiesVisible();
+    }    
+
+    bool canDo (RCBot@ bot)
+    {
+        if  ( bot.m_pEnemy.GetEntity() !is null && bot.m_pEnemiesVisible.EnemiesVisible() > 0 ) 
+            return CBotUtil::canDo(bot);
+
+        return false;
+    }
+
+    string DebugMessage ()
+    {
+        return "CbotFindCoverUtil";
+    }
+
+    RCBotSchedule@ execute ( RCBot@ bot )
+    {
+        Vector vHideFrom = UTIL_EntityOrigin(bot.m_pEnemy.GetEntity());
+
+        RCBotSchedule@ sched = CBotTaskFindCoverSchedule(bot,vHideFrom);
+        return sched;
+    } 
+    
+}
+
+class CBotThrowGrenadeUtil : CBotUtil
+{
+     Vector vLastSeeEnemy;
+    string DebugMessage ()
+    {
+        return "CBotThrowGrenadeUtil";
+    }
+
+    float calculateUtility ( RCBot@ bot )
+    {        
+        return 1.0f;
+    }    
+
+    bool canDo (RCBot@ bot)
+    {
+        if ( bot.getGrenade() !is null )
+        {
+            BotEnemyLastSeen@ nearestLastSeen = bot.m_pEnemiesVisible.nearestEnemySeen(bot);
+
+            if ( nearestLastSeen !is null )
+            {
+                vLastSeeEnemy = nearestLastSeen.getGrenadePosition();
+
+                if ( vLastSeeEnemy.z > (bot.m_pPlayer.pev.origin.z+128) )
+                    return false; // can't throw high
+
+                float distance = bot.distanceFrom(vLastSeeEnemy);
+                
+                if ( UTIL_IsVisible(bot.m_pPlayer.pev.origin, bot.m_vLastSeeEnemy, bot.m_pPlayer) && bot.m_bLastSeeEnemyValid && (distance > 300) && (distance<1000) )
+                {
+                    return CBotUtil::canDo(bot);
+                }
+            }
+        }
+
+        return false;
+    }
+
+    RCBotSchedule@ execute ( RCBot@ bot )
+    {
+        RCBotSchedule@ sched = CThrowGrenadeSchedule(bot,vLastSeeEnemy);
+        return sched;
+    }    
+}
+
 /**
  * CBotHealPlayerUtil
  *
@@ -1839,7 +2169,7 @@ class CBotRevivePlayerUtil : CBotUtil
 {
     float calculateUtility ( RCBot@ bot )
     {        
-        return 1.0f;
+        return 1.0f - (bot.m_pEnemiesVisible.EnemiesVisible()*0.1f);
     }
 
     bool canDo (RCBot@ bot)
@@ -2466,6 +2796,8 @@ class CBotUtilities
             m_Utils.insertLast(CBotRevivePlayerUtil());
             m_Utils.insertLast(CBotUseTankUtil());
             m_Utils.insertLast(CCheckoutNoiseUtil());
+            m_Utils.insertLast(CBotThrowGrenadeUtil());
+            m_Utils.insertLast(CBotFindCoverUtil());
     }
 
     void reset ()

@@ -20,6 +20,7 @@ enum eCamLookState
 // one bot cam, other players can tune into it
 class CBotCam
 {
+	//array<EHandle> m_pPlayersWatching;
 
 	CBotCam ()
 	{
@@ -53,6 +54,7 @@ class CBotCam
 			//m_pCameraEdict.pev.classname = string_t("entity_botcam");
 			m_pCameraEdict.pev.nextthink = g_Engine.time;
 			m_pCameraEdict.pev.renderamt = 0;
+			m_fNextChangeBotTime = 0;
 			// /Redfox
 		}		
 	}
@@ -67,15 +69,28 @@ class CBotCam
 		
 		if ( m_fNextChangeBotTime < g_Engine.time )
 		{
-			m_fNextChangeBotTime = g_Engine.time + 5.0f;
-
-			@m_pCurrentBot = g_BotManager.getBestBot();
+			//m_fNextChangeBotTime = g_Engine.time + 5.0f;
+			SetCurrentBot( g_BotManager.getBestBot());
 
 			/*if ( m_pCurrentBot !is null )
 			{
 				// Best bot is 
 				//BotMessage("BOTCAM, Best bot is " + m_pCurrentBot.m_pPlayer.pev.netname);
 			}*/
+		}
+		else 
+		{
+			// check current bot is visible and alive
+
+			if ( m_pCurrentBot is null || !g_BotManager.IsBotValid(m_pCurrentBot) )
+			{
+				m_fNextChangeBotTime = 0.0f;
+			}
+			else 
+			{
+				if ( !UTIL_IsVisible(vCamOrigin,m_pCurrentBot.m_pPlayer.pev.origin,m_pCurrentBot.m_pPlayer) )
+					m_fNextChangeBotTime = 0.0f;
+			}
 		}
 
 		UpdateCamera();
@@ -91,7 +106,7 @@ class CBotCam
 	{
 		if ( m_pCurrentBot !is null )
 		{
-			Vector vLookAt;
+		
 			CBaseEntity@ pEntityFrom;
 
 			if ( m_pCameraEdict is null )
@@ -99,22 +114,29 @@ class CBotCam
 				//BotMessage("m_pCameraEdict is null ");
 				return;
 			}
-
-			CBasePlayer@ pPlayer = m_pCurrentBot.m_pPlayer;
-			// Ok set noise to forward vector
-			g_EngineFuncs.MakeVectors(pPlayer.pev.v_angle);
-			Vector vOrigin = pPlayer.EyePosition() - (g_Engine.v_forward * 128.0f);
-			vOrigin.z = pPlayer.EyePosition().z;
-			Vector vAngles = Math.VecToAngles(pPlayer.EyePosition() - vOrigin);
-
-			TraceResult tr;
-
-		   g_Utility.TraceLine( pPlayer.EyePosition(), vOrigin, ignore_monsters,dont_ignore_glass, m_pCurrentBot.m_pPlayer.edict(), tr );
-
-			m_pCameraEdict.SetOrigin(tr.vecEndPos);
+	CBasePlayer@ pPlayer = m_pCurrentBot.m_pPlayer;
+			Vector vLookAt;
+			CBaseEntity@ pEnemy = m_pCurrentBot.m_pEnemy.GetEntity();
+			if ( pEnemy !is null )
+				vLookAt = UTIL_EntityOrigin(pEnemy);
+			else 
+				vLookAt = pPlayer.EyePosition();
+			Vector vAngles = Math.VecToAngles(vLookAt - vCamOrigin);
+			
 			m_pCameraEdict.pev.v_angle = vAngles;
 			m_pCameraEdict.pev.angles = vAngles;
-			
+			m_pCameraEdict.pev.angles.x = -vAngles.x;
+			m_pCameraEdict.SetOrigin(vCamOrigin);
+
+			/*for ( uint i = 0; i < m_pPlayersWatching.length(); i ++ )
+			{
+				@pPlayer = m_pPlayersWatching[i].GetEntity();
+
+				if ( pPlayer !is null )
+				{
+					g_EngineFuncs.SetView(pPlayer.edict(),m_pCameraEdict.edict());
+				}
+			}*/
 		}
 	}
 
@@ -138,6 +160,8 @@ class CBotCam
 			return false;
 		}
 
+		//m_pPlayersWatching.push_back(EHandle(pPlayer));
+
 		g_EngineFuncs.SetView(pPlayer.edict(),m_pCameraEdict.edict());
 
 		return true;
@@ -145,7 +169,18 @@ class CBotCam
 
 	void TuneOff ( CBasePlayer@ pPlayer )
 	{
-		g_EngineFuncs.SetView(pPlayer.edict(),pPlayer.edict());
+		/*uint index;
+
+		for ( index = 0; index < m_pPlayersWatching.length(); index ++ )
+		{
+			if ( m_pPlayersWatching[index].GetEntity() is pPlayer )
+				break;
+		}*/
+
+		//if ( index < m_pPlayersWatching.length() )
+		//	m_pPlayersWatching.removeAt(index);
+
+		g_EngineFuncs.SetView(pPlayer.edict(),pPlayer.edict());		
 	}
 
 	bool IsWorking ()
@@ -161,12 +196,32 @@ class CBotCam
 		return (m_pCurrentBot.m_pEnemy.GetEntity() !is null);
 	}
 
+Vector vCamOrigin;
 
 	void SetCurrentBot(RCBot@ pBot)
 	{
+		
+		if ( pBot !is null )
+		{
 		@m_pCurrentBot = pBot;
 		m_fNextChangeBotTime = g_Engine.time + Math.RandomFloat(5.0,7.5);
 		m_fNextChangeState = g_Engine.time;
+
+		CBasePlayer@ pPlayer = m_pCurrentBot.m_pPlayer;
+			// Ok set noise to forward vector
+			g_EngineFuncs.MakeVectors(pPlayer.pev.v_angle);
+			Vector vOrigin = pPlayer.EyePosition() - (g_Engine.v_forward * 128.0f);
+			vOrigin.z = pPlayer.EyePosition().z + 64.0f;
+			
+			TraceResult tr;
+
+		   g_Utility.TraceLine( pPlayer.EyePosition(), vOrigin, ignore_monsters,dont_ignore_glass, m_pCurrentBot.m_pPlayer.edict(), tr );
+
+		vCamOrigin = tr.vecEndPos + g_Engine.v_forward;	
+
+	//	BotMessage("Now tracking... BOTNAME\n");
+		}
+			
 	}
 
 	RCBot@ m_pCurrentBot;
@@ -750,6 +805,23 @@ namespace BotManager
 
 			return HOOK_CONTINUE;
 		}
+
+		bool IsBotValid ( BaseBot@ bot )
+		{
+			
+
+			for( uint uiIndex = 0; uiIndex < m_Bots.length(); ++uiIndex )
+			{
+				BaseBot@ pBot = m_Bots[ uiIndex ];
+				
+				if( pBot !is null && pBot is bot )
+				{
+					return true;
+				}
+			}
+			
+			return false;
+		}
 		
 		uint GetBotCount() const
 		{
@@ -906,8 +978,15 @@ namespace BotManager
 					m_fAddBotTime = g_Engine.time + 5.0f;
 				}
 			}
-			
-			g_Waypoints.runVisibility();
+			else if ( m_Bots.length() > m_iBotQuota )
+			{
+				if ( m_fAddBotTime < g_Engine.time )
+				{
+					UTIL_KickNextBot();
+
+					m_fAddBotTime = g_Engine.time + 5.0f;
+				}
+			}
 
 			g_BotCam.Think();
 
@@ -920,7 +999,12 @@ namespace BotManager
 
 				g_WaypointsLoaded = true;
 				g_MapInit = false;
+				
 			}
+			
+			if ( g_MapInit == false )
+				g_Waypoints.Think();
+
 
 			if ( g_NoTouch )
 			{

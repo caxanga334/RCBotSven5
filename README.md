@@ -12,19 +12,19 @@ http://rcbot.bots-united.com/forums/index.php?act=Attach&type=post&id=561
 
 
 ```
-"plugins"
-{
-:
-:
+
+
+
+
  "plugin"
- {
+    {
         "name" "RCBot"
         "script" "BotManager/BotManager"
         "concommandns" "rcbot"
- }
-:
-:
-}
+    }
+
+
+
 ```
 
 do not put comments (//) in front of these lines!!!
@@ -70,6 +70,18 @@ show waypoints with
 similarly, put them back off with
   
     as_command rcbot.waypoint_off
+    
+# Auto waypointing
+
+auto waypointing adds waypoints whilst you run around a map. It can create jump waypoints, crouch waypoints, ladder waypoints and waypoints round corners.
+
+Enable auto waypointing with the command 
+
+    as_command rcbot.waypoint_auto
+    
+Disable auto waypointing with the command
+
+    as_command rcbot.waypoint_auto off
 
 # Adding a waypoint
 
@@ -87,7 +99,7 @@ Go to the first waypoint and use the command
 
 then go to the second waypoint and use the command:
 
-    as_command rcbot.pathwaypoint create2
+    as_command rcbot.pathwaypoint_create2
 
 # Remove a path
 
@@ -97,7 +109,7 @@ Go to the first waypoint and use the command
 
 then go to the second waypoint and use the command:
 
-    as_command rcbot.pathwaypoint remove2
+    as_command rcbot.pathwaypoint_remove2
     
    # Remove all paths to a waypoint
    

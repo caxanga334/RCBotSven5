@@ -101,6 +101,8 @@
 
 				if ( pPlayer.pev.groundentity !is pOnTopOf.edict() )
 					continue;
+				
+			//	BotMessage("OK!!!!");
 
 				dist  = (pPlayer.pev.origin - vOrigin).Length();
 									
@@ -111,10 +113,13 @@
 				}
 			}
 
+			//if ( ret !is null )
+			//	BotMessage("NOT NULL!!!!");
+
 			return ret;
 	}	
 
-	CBasePlayer@ UTIL_FindNearestPlayer ( Vector vOrigin, float minDistance = 512.0f, CBasePlayer@ ignore = null, bool onGroundOnly = false, bool bMovingOnly = false )
+	CBasePlayer@ UTIL_FindNearestPlayer ( Vector vOrigin, float minDistance = 512.0f, CBasePlayer@ ignore = null, bool onGroundOnly = false, bool bMovingOnly = false, int flags = 0 )
 	{
 		CBasePlayer@ ret = null;
 
@@ -132,22 +137,15 @@
 
 				if ( onGroundOnly )
 				{
-					if ( pPlayer.pev.groundentity !is null )
-					{
-					CBaseEntity@ gnd = g_EntityFuncs.Instance(pPlayer.pev.groundentity);
-
-					if ( gnd.GetClassname() != "worldspawn" )
-						continue;
-					}
-
-					if ( pPlayer.pev.flags & FL_DUCKING != FL_DUCKING )
-						continue;
-
-					if ( pPlayer.pev.flags & FL_ONGROUND != FL_ONGROUND )
-						continue;
-
 					if ( pPlayer.pev.movetype == MOVETYPE_FLY )
 						continue;
+				}
+
+				if ( flags > 0 )
+				{
+					if ( pPlayer.pev.flags & flags != flags )
+						continue;
+					
 				}
 
 				if ( bMovingOnly )
@@ -261,6 +259,26 @@
 				 v.x < pent.pev.absmax.x && v.y < pent.pev.absmax.y && v.z < pent.pev.absmax.z );
 	}
 
+	TraceResult UTIL_TraceLine ( Vector vFrom, CBaseEntity@ pTo )
+	{
+		TraceResult tr;
+
+		Vector vTo = UTIL_EntityOrigin(pTo);
+
+		g_Utility.TraceLine( vFrom, vTo, ignore_monsters,ignore_glass,null, tr );
+
+        return tr;
+	}
+
+	TraceResult UTIL_TraceLine ( Vector vFrom, Vector vTo )
+	{
+		TraceResult tr;
+
+		g_Utility.TraceLine( vFrom, vTo, ignore_monsters,ignore_glass,null, tr );
+
+        return tr;
+	}	
+
     bool UTIL_IsVisible ( Vector vFrom, Vector vTo, CBaseEntity@ ignore = null )
     {
         TraceResult tr;
@@ -285,7 +303,7 @@
 
         CBaseEntity@ pEntity = g_EntityFuncs.Instance( tr.pHit );
 
-        return tr.flFraction >= 1.0f || ((pTo is pEntity)&&(pTo !is null));
+        return tr.flFraction >= 1.0f || ((pTo == pEntity)&&(pTo !is null));
     }   
 		 	        
 
@@ -418,6 +436,32 @@ CBasePlayer@ UTIL_FindPlayer ( string szName, CBaseEntity@ pIgnore = null, bool 
 
 }
 
+/**
+ * Return approximate grenade landing position
+ */
+Vector UTIL_GrenadeEndPoint ( CBaseEntity@ grenade )
+{
+	Vector vPrev = UTIL_EntityOrigin(grenade);
+	Vector vVelocity = grenade.pev.velocity;
+	Vector vNext;
+
+	TraceResult tr;
+
+	tr.flFraction = 1.0;
+	vNext.z = 0;
+
+	while ( tr.flFraction >= 1.0 && vNext.z > -8192 )
+	{
+		vVelocity = vVelocity - Vector(0,0,800); // default gravity
+
+		vNext = vPrev + vVelocity;
+
+		tr = UTIL_TraceLine(vPrev,vNext);
+	}
+
+	return vNext;
+}
+
 CBaseEntity@ UTIL_FindButton ( CBaseToggle@ door, CBaseEntity@ pPlayer )
 {
     string masterName = door.m_sMaster;
@@ -430,18 +474,23 @@ CBaseEntity@ UTIL_FindButton ( CBaseToggle@ door, CBaseEntity@ pPlayer )
 		UTIL_DebugMsg(pPlayer,"pMaster !is null",DEBUG_THINK);
 		return UTIL_RandomTarget(pMaster.pev.targetname,pPlayer);
     }
+	else 
+		UTIL_DebugMsg(pPlayer,"pMaster is null",DEBUG_THINK);
 
 	if ( door.pev.targetname == "" )
 	{
 		UTIL_DebugMsg(pPlayer,"door.pev.targetname is empty :(",DEBUG_THINK);		
 		return null;
 	}	
+	else 
+		UTIL_DebugMsg(pPlayer,"door.pev.targetname is '"+door.pev.targetname+"'",DEBUG_THINK);		
 
 	@pButton = FIND_ENTITY_BY_TARGET(null,door.pev.targetname);
 
 	if ( pButton !is null )
 	{
 		string szClassname = pButton.GetClassname();
+		
 		UTIL_DebugMsg(pPlayer,"pButton !is null",DEBUG_THINK);
 
 		if ( szClassname != "func_button" && szClassname != "func_rot_button"  && szClassname != "momentary_rot_button" )
@@ -452,6 +501,10 @@ CBaseEntity@ UTIL_FindButton ( CBaseToggle@ door, CBaseEntity@ pPlayer )
 		}
 		else 
 			return UTIL_RandomTarget(door.pev.targetname,pPlayer);
+	}
+	else 
+	{
+		UTIL_DebugMsg(pPlayer,"pButton is null :(",DEBUG_THINK);	
 	}
 
 	return null;
@@ -520,6 +573,8 @@ bool UTIL_CanUseTank ( CBaseEntity@ pBot, CBaseEntity@ pTankEnt )
 		//BotMessage("pTank is null");
 		return false;
 	}
+	if ( !pTank.CanFire() )
+		return false;
 
 	if ( pTank.pev.effects & EF_NODRAW == EF_NODRAW )
 		return false;
@@ -565,6 +620,9 @@ bool UTIL_IsReachable ( Vector vFrom, Vector vTo, CBaseEntity@ ignore = null )
 	g_Utility.TraceLine( vFrom - vCross, vTo - vCross, ignore_monsters,ignore_glass, ignore is null ? null : ignore.edict(), tr );
 	if ( tr.flFraction < 1.0f )
 			return false;
+
+	if ( (g_EngineFuncs.PointContents(vFrom) == CONTENTS_WATER) && (g_EngineFuncs.PointContents(vTo) == CONTENTS_WATER) )
+		return true; // swimmable
 		
 	// check the ground along the way
 	vComp = vComp / 8;
@@ -573,8 +631,6 @@ bool UTIL_IsReachable ( Vector vFrom, Vector vTo, CBaseEntity@ ignore = null )
 
 	for ( int i = 0; i < 8; i ++ )
 	{
-        
-
         g_Utility.TraceLine( vCurrent, vCurrent - Vector(0,0,64.0), ignore_monsters,ignore_glass, ignore is null ? null : ignore.edict(), tr );
 
 		vCurrent = vCurrent + vComp;
@@ -663,4 +719,19 @@ bool UTIL_DoesNearestTeleportGoTo ( Vector vTeleportOrigin, Vector vGoto )
 
 	return (UTIL_EntityOrigin(pTeleportDestination) - vGoto).Length() < 400.0f;
 
+}
+
+
+void UTIL_KickNextBot ( )
+{
+	for( int iPlayer = 1; iPlayer <= g_Engine.maxClients; ++iPlayer )
+	{
+		CBasePlayer@ pPlayer = g_PlayerFuncs.FindPlayerByIndex( iPlayer );
+		
+		if( pPlayer !is null && ( pPlayer.pev.flags & FL_FAKECLIENT ) != 0 )
+		{
+			g_AdminControl.KickPlayer(pPlayer);		
+			return;
+		}
+	}
 }
